@@ -369,8 +369,7 @@
         id: 1,
         start: 0,
         end: 45,
-        speechDuration: 35.68,
-        audioDuration: 38.18,
+        audioDuration: 35.68,
         title: "Oceanblue Quay & The Haven",
         location: "Ventnor Haven • Fishermen's Landing",
         audioSrc: "media/scene1.mp3",
@@ -390,8 +389,7 @@
         id: 2,
         start: 45,
         end: 90,
-        speechDuration: 38.64,
-        audioDuration: 41.14,
+        audioDuration: 38.64,
         title: "Haven Rotunda & Slipway",
         location: "Haven Rotunda • Red Shingle Beach",
         audioSrc: "media/scene2.mp3",
@@ -411,8 +409,7 @@
         id: 3,
         start: 90,
         end: 140,
-        speechDuration: 40.00,
-        audioDuration: 42.50,
+        audioDuration: 40.00,
         title: "Clifftop Panorama & Sunbreak",
         location: "Ventnor Undercliff Panoramic",
         audioSrc: "media/scene3.mp3",
@@ -432,8 +429,7 @@
         id: 4,
         start: 140,
         end: 180,
-        speechDuration: 35.04,
-        audioDuration: 37.54,
+        audioDuration: 35.04,
         title: "Sparkling Channel & Handover to Shanklin",
         location: "Ventnor Bay • Next Stop: Shanklin",
         audioSrc: "media/scene4.mp3",
@@ -610,34 +606,23 @@
       if (timeIntoScene < 1.0) {
         if (!currentAudio.paused) currentAudio.pause();
         currentAudio.currentTime = 0;
-        ambientAudio.volume = isMuted ? 0 : masterVolume * 0.40;
         updateNarratorStatusUI('padding', 1.0 - timeIntoScene);
       } else {
         const targetAudioTime = timeIntoScene - 1.0;
-        const totalDuration = s.audioDuration; // Padded with 2.5s decay
-        const speechDuration = s.speechDuration || (totalDuration - 2.5);
+        const duration = s.audioDuration;
 
-        if (targetAudioTime < totalDuration) {
-          // Keep audio aligned
+        if (targetAudioTime < duration) {
+          // Voiceover should be active and speaking
           if (Math.abs(currentAudio.currentTime - targetAudioTime) > 0.3) {
             currentAudio.currentTime = targetAudioTime;
           }
           if (currentAudio.paused && !isMuted) {
             currentAudio.play().catch(e => console.warn('Audio play:', e));
           }
-
-          if (targetAudioTime < speechDuration) {
-            ambientAudio.volume = isMuted ? 0 : masterVolume * 0.12;
-            updateNarratorStatusUI('speaking', speechDuration - targetAudioTime);
-          } else {
-            // Speech finished — natural trailing padding & decay playing out
-            ambientAudio.volume = isMuted ? 0 : masterVolume * 0.35;
-            updateNarratorStatusUI('decay', totalDuration - targetAudioTime);
-          }
+          updateNarratorStatusUI('speaking', duration - targetAudioTime);
         } else {
-          // Voiceover fully complete; peaceful ocean waves break until next scene
+          // Voiceover finished; brief ambient break before next scene
           if (!currentAudio.paused) currentAudio.pause();
-          ambientAudio.volume = isMuted ? 0 : masterVolume * 0.50;
           updateNarratorStatusUI('finished');
         }
       }
@@ -730,10 +715,6 @@
         waveEl.style.opacity = '1';
         textEl.className = "text-teal-300 font-semibold";
         textEl.innerText = `Narrator Speaking (${Math.ceil(extra)}s)`;
-      } else if (state === 'decay') {
-        waveEl.style.opacity = '0.5';
-        textEl.className = "text-teal-200/90 font-medium";
-        textEl.innerText = `Narrator Outro (${Math.ceil(extra)}s)`;
       } else if (state === 'padding') {
         waveEl.style.opacity = '0.2';
         textEl.className = "text-amber-400 font-medium";
