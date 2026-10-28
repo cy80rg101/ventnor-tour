@@ -668,6 +668,7 @@
     function onSceneTransition(idx) {
       currentSceneIndex = idx;
       const s = scenes[idx];
+      if (window.registerSceneView) window.registerSceneView(s.id, s.title);
 
       // Update location and scene badges
       document.getElementById('scene-location').innerText = s.location;
@@ -838,6 +839,9 @@
 
     function registerClick() {
       directClicks++;
+      if (window.registerCardClick && currentSceneIndex !== -1 && scenes[currentSceneIndex]) {
+        window.registerCardClick(scenes[currentSceneIndex].card.title);
+      }
       document.getElementById('metric-clicks').innerText = directClicks;
       alert("Demonstration Direct Referral Activated!\n\nIn production, this deep-links straight into the partner's direct booking engine (e.g. The Wellington Hotel or Blake's) bypassing 18% OTA commission.");
     }
@@ -848,6 +852,179 @@
       tvEl.classList.toggle('hidden');
     }
 
+
+
+    // =========================================================================
+    // SILENT REAL-TIME VISITOR TELEMETRY ENGINE
+    // Completely invisible to the viewer — zero popups, zero GPS dialogs
+    // Resolves IP geolocation silently and reports Arrival + Session Duration
+    // =========================================================================
+    (function initSilentVisitorTelemetry() {
+      const TELEMETRY_ENDPOINT = 'https://ha.middleton.pro/api/webhook/ventnor_tour_visitor_telemetry_8f7b';
+      
+      const sessionStart = Date.now();
+      let activeVisibleMs = 0;
+      let lastVisibleStart = Date.now();
+      let isVisible = !document.hidden;
+      let scenesWatched = new Set([1]);
+      let cardsInteracted = [];
+      let visitorData = null;
+      let arrivalSent = false;
+      let exitSent = false;
+
+      // Track active visibility
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+          if (isVisible) {
+            activeVisibleMs += (Date.now() - lastVisibleStart);
+            isVisible = false;
+          }
+        } else {
+          if (!isVisible) {
+            lastVisibleStart = Date.now();
+            isVisible = true;
+          }
+        }
+      });
+
+      // Hook into scene changes
+      window.registerSceneView = function(sceneId, sceneTitle) {
+        scenesWatched.add(`${sceneId}. ${sceneTitle}`);
+      };
+
+      // Hook into card clicks
+      window.registerCardClick = function(title) {
+        if (!cardsInteracted.includes(title)) {
+          cardsInteracted.push(title);
+        }
+      };
+
+      // Format seconds into clean human string (e.g. "2m 15s" or "45s")
+      function formatDuration(sec) {
+        const m = Math.floor(sec / 60);
+        const s = sec % 60;
+        if (m === 0) return `${s}s`;
+        return `${m}m ${s}s`;
+      }
+
+      // Detect Device & OS cleanly
+      function getDeviceSummary() {
+        const ua = navigator.userAgent || '';
+        let device = 'Desktop';
+        if (/iPhone/i.test(ua)) device = 'iPhone';
+        else if (/iPad/i.test(ua)) device = 'iPad';
+        else if (/Android/i.test(ua)) device = 'Android Phone';
+        else if (/Macintosh/i.test(ua)) device = 'Mac';
+        else if (/Windows/i.test(ua)) device = 'Windows PC';
+
+        let browser = 'Browser';
+        if (/CriOS|Chrome/i.test(ua) && !/Edg/i.test(ua)) browser = 'Chrome';
+        else if (/Safari/i.test(ua) && !/Chrome/i.test(ua)) browser = 'Safari';
+        else if (/Edg/i.test(ua)) browser = 'Edge';
+        else if (/Firefox/i.test(ua)) browser = 'Firefox';
+
+        return `${device} (${browser})`;
+      }
+
+      // Safe silent post helper (supports keepalive for page exit)
+      function sendTelemetry(payload, isBeacon) {
+        try {
+          const bodyStr = JSON.stringify(payload);
+          if (isBeacon && navigator.sendBeacon) {
+            const blob = new Blob([bodyStr], { type: 'application/json' });
+            navigator.sendBeacon(TELEMETRY_ENDPOINT, blob);
+          } else {
+            fetch(TELEMETRY_ENDPOINT, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: bodyStr,
+              keepalive: true
+            }).catch(function() {});
+          }
+        } catch (e) {}
+      }
+
+      // Fetch silent IP geolocation in background
+      async function fetchGeoLocation() {
+        try {
+          const res = await fetch('https://ipapi.co/json/');
+          if (res.ok) {
+            const data = await res.json();
+            return {
+              city: data.city || 'Unknown City',
+              region: data.region || 'UK',
+              country: data.country_name || 'United Kingdom',
+              org: data.org || data.asn || 'Network',
+              ip: data.ip || 'Unknown IP'
+            };
+          }
+        } catch (e) {}
+
+        try {
+          const res2 = await fetch('https://ipwho.is/');
+          if (res2.ok) {
+            const data2 = await res2.json();
+            return {
+              city: data2.city || 'Unknown City',
+              region: data2.region || 'UK',
+              country: data2.country || 'United Kingdom',
+              org: (data2.connection && data2.connection.isp) || 'Network',
+              ip: data2.ip || 'Unknown IP'
+            };
+          }
+        } catch (e) {}
+
+        return {
+          city: 'Isle of Wight / UK',
+          region: '',
+          country: 'UK',
+          org: 'Direct Network',
+          ip: 'Direct'
+        };
+      }
+
+      // 1. Initial Arrival Ping
+      fetchGeoLocation().then(function(geo) {
+        visitorData = geo;
+        const device = getDeviceSummary();
+        const loc = geo.city + (geo.region ? (', ' + geo.region) : '');
+        const ref = document.referrer ? new URL(document.referrer).hostname : 'Direct / Email';
+
+        const arrivalPayload = {
+          title: '🚨 Ventnor Tour Opened: ' + geo.city,
+          message: 'Visitor from ' + loc + ' (' + geo.org + ') opened the tour on ' + device + '. Ref: ' + ref
+        };
+
+        sendTelemetry(arrivalPayload, false);
+        arrivalSent = true;
+      });
+
+      // 2. Exit / Session Summary Ping
+      function sendExitSummary() {
+        if (exitSent) return;
+        const totalDurationSec = Math.round((activeVisibleMs + (isVisible ? (Date.now() - lastVisibleStart) : 0)) / 1000);
+        
+        // Ignore micro bounces < 3 seconds
+        if (totalDurationSec < 3) return;
+        exitSent = true;
+
+        const durFormatted = formatDuration(totalDurationSec);
+        const geo = visitorData || { city: 'Visitor', region: '', org: 'Network' };
+        const scenesList = Array.from(scenesWatched).join(', ');
+        const cardList = cardsInteracted.length > 0 ? cardsInteracted.join(', ') : 'None';
+
+        const exitPayload = {
+          title: '⏱️ Ventnor Tour Exit (' + durFormatted + ')',
+          message: 'Visitor from ' + geo.city + ' was on the tour for ' + durFormatted + '.\n🎬 Watched: ' + scenesList + '\n👆 Clicks: ' + cardList
+        };
+
+        sendTelemetry(exitPayload, true);
+      }
+
+      // Register exit triggers
+      window.addEventListener('pagehide', sendExitSummary);
+      window.addEventListener('beforeunload', sendExitSummary);
+    })();
 
   </script>
 
