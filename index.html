@@ -504,6 +504,7 @@
     // Start Experience from Initial Overlay
     function startExperience() {
       unlockAllAudios();
+      if (window.registerPlayTrigger) window.registerPlayTrigger();
       const overlay = document.getElementById('start-overlay');
       if (overlay) {
         overlay.classList.add('opacity-0', 'pointer-events-none');
@@ -854,10 +855,12 @@
 
 
 
-    // =========================================================================
-    // SILENT REAL-TIME VISITOR TELEMETRY ENGINE
+        // =========================================================================
+    // BULLETPROOF SILENT REAL-TIME VISITOR TELEMETRY ENGINE
     // Completely invisible to the viewer — zero popups, zero GPS dialogs
-    // Resolves IP geolocation silently and reports Arrival + Session Duration
+    // 1. Fires arrival ping IMMEDIATELY (0ms delay, zero external dependencies)
+    // 2. Enriches with silent IP geolocation in parallel (ipwho.is / ipify)
+    // 3. Tracks active viewing duration and sends exit summary via sendBeacon
     // =========================================================================
     (function initSilentVisitorTelemetry() {
       const TELEMETRY_ENDPOINT = 'https://ha.middleton.pro/api/webhook/ventnor_tour_visitor_telemetry_8f7b';
@@ -868,12 +871,13 @@
       let isVisible = !document.hidden;
       let scenesWatched = new Set([1]);
       let cardsInteracted = [];
-      let visitorData = null;
+      let visitorGeo = null;
       let arrivalSent = false;
+      let playTriggered = false;
       let exitSent = false;
 
       // Track active visibility
-      document.addEventListener('visibilitychange', () => {
+      document.addEventListener('visibilitychange', function() {
         if (document.hidden) {
           if (isVisible) {
             activeVisibleMs += (Date.now() - lastVisibleStart);
@@ -926,7 +930,7 @@
         return `${device} (${browser})`;
       }
 
-      // Safe silent post helper (supports keepalive for page exit)
+      // Safe silent post helper (supports sendBeacon for page exit)
       function sendTelemetry(payload, isBeacon) {
         try {
           const bodyStr = JSON.stringify(payload);
@@ -944,62 +948,62 @@
         } catch (e) {}
       }
 
-      // Fetch silent IP geolocation in background
-      async function fetchGeoLocation() {
+      // STEP 1: FIRE INSTANT ARRIVAL PING IMMEDIATELY (ZERO DELAY)
+      const device = getDeviceSummary();
+      const ref = document.referrer ? new URL(document.referrer).hostname : 'Direct / Email';
+      sendTelemetry({
+        title: '🚨 Ventnor Tour Opened!',
+        message: 'A visitor opened the tour on ' + device + '. Source: ' + ref
+      }, false);
+      arrivalSent = true;
+
+      // STEP 2: SILENT GEO ENRICHMENT IN PARALLEL
+      async function enrichLocation() {
         try {
-          const res = await fetch('https://ipapi.co/json/');
+          // Primary: ipwho.is (fast, unthrottled, reliable CORS)
+          const res = await fetch('https://ipwho.is/');
           if (res.ok) {
             const data = await res.json();
-            return {
-              city: data.city || 'Unknown City',
-              region: data.region || 'UK',
-              country: data.country_name || 'United Kingdom',
-              org: data.org || data.asn || 'Network',
-              ip: data.ip || 'Unknown IP'
-            };
+            if (data && data.success !== false) {
+              visitorGeo = {
+                city: data.city || 'Isle of Wight',
+                region: data.region || 'England',
+                org: (data.connection && data.connection.isp) || 'Network'
+              };
+              // Send location enrichment ping
+              sendTelemetry({
+                title: '📍 Visitor Located: ' + visitorGeo.city,
+                message: 'Visitor location: ' + visitorGeo.city + ', ' + visitorGeo.region + ' (' + visitorGeo.org + ' on ' + device + ').'
+              }, false);
+              return;
+            }
           }
         } catch (e) {}
 
         try {
-          const res2 = await fetch('https://ipwho.is/');
+          // Secondary fallback
+          const res2 = await fetch('https://api.ipify.org?format=json');
           if (res2.ok) {
-            const data2 = await res2.json();
-            return {
-              city: data2.city || 'Unknown City',
-              region: data2.region || 'UK',
-              country: data2.country || 'United Kingdom',
-              org: (data2.connection && data2.connection.isp) || 'Network',
-              ip: data2.ip || 'Unknown IP'
-            };
+            const d2 = await res2.json();
+            visitorGeo = { city: 'Visitor IP: ' + d2.ip, region: '', org: 'Web' };
           }
         } catch (e) {}
-
-        return {
-          city: 'Isle of Wight / UK',
-          region: '',
-          country: 'UK',
-          org: 'Direct Network',
-          ip: 'Direct'
-        };
       }
+      enrichLocation();
 
-      // 1. Initial Arrival Ping
-      fetchGeoLocation().then(function(geo) {
-        visitorData = geo;
-        const device = getDeviceSummary();
-        const loc = geo.city + (geo.region ? (', ' + geo.region) : '');
-        const ref = document.referrer ? new URL(document.referrer).hostname : 'Direct / Email';
+      // STEP 3: HOOK PLAY BUTTON FOR PLAYBACK PING
+      window.registerPlayTrigger = function() {
+        if (!playTriggered) {
+          playTriggered = true;
+          const loc = visitorGeo ? (' from ' + visitorGeo.city) : '';
+          sendTelemetry({
+            title: '🎬 Ventnor Tour Playing!',
+            message: 'Visitor' + loc + ' started playing the guided tour (' + device + ').'
+          }, false);
+        }
+      };
 
-        const arrivalPayload = {
-          title: '🚨 Ventnor Tour Opened: ' + geo.city,
-          message: 'Visitor from ' + loc + ' (' + geo.org + ') opened the tour on ' + device + '. Ref: ' + ref
-        };
-
-        sendTelemetry(arrivalPayload, false);
-        arrivalSent = true;
-      });
-
-      // 2. Exit / Session Summary Ping
+      // STEP 4: EXIT / SESSION SUMMARY BEACON
       function sendExitSummary() {
         if (exitSent) return;
         const totalDurationSec = Math.round((activeVisibleMs + (isVisible ? (Date.now() - lastVisibleStart) : 0)) / 1000);
@@ -1009,23 +1013,19 @@
         exitSent = true;
 
         const durFormatted = formatDuration(totalDurationSec);
-        const geo = visitorData || { city: 'Visitor', region: '', org: 'Network' };
+        const loc = visitorGeo ? (visitorGeo.city + ', ' + visitorGeo.region) : 'Visitor';
         const scenesList = Array.from(scenesWatched).join(', ');
         const cardList = cardsInteracted.length > 0 ? cardsInteracted.join(', ') : 'None';
 
-        const exitPayload = {
+        sendTelemetry({
           title: '⏱️ Ventnor Tour Exit (' + durFormatted + ')',
-          message: 'Visitor from ' + geo.city + ' was on the tour for ' + durFormatted + '.\n🎬 Watched: ' + scenesList + '\n👆 Clicks: ' + cardList
-        };
-
-        sendTelemetry(exitPayload, true);
+          message: loc + ' was on the tour for ' + durFormatted + ' (' + device + ').\n🎬 Watched: ' + scenesList + '\n👆 Clicks: ' + cardList
+        }, true);
       }
 
-      // Register exit triggers
       window.addEventListener('pagehide', sendExitSummary);
       window.addEventListener('beforeunload', sendExitSummary);
     })();
-
   </script>
 
 </body>
