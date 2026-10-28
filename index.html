@@ -343,16 +343,7 @@
         </div>
       </div>
 
-      <!-- LIVE WEB FEED SWITCH -->
-      <div class="glass-panel p-4 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
-        <div>
-          <div class="font-bold text-white">Stream Source</div>
-          <div class="text-slate-400 text-[11px]" id="source-label">Synchronized 3-Min Demo Loop</div>
-        </div>
-        <button onclick="toggleSource()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold transition">
-          Switch Source
-        </button>
-      </div>
+
 
     </div>
 
@@ -857,31 +848,7 @@
       tvEl.classList.toggle('hidden');
     }
 
-    // Toggle Source between Synchronized MP4 & Live YouTube Feed
-    function toggleSource() {
-      const v = document.getElementById('tour-video');
-      const f = document.getElementById('yt-live-frame');
-      const lbl = document.getElementById('source-label');
 
-      if (!isLiveStream) {
-        v.pause();
-        sceneAudios.forEach(a => a.pause());
-        ambientAudio.pause();
-        v.classList.add('hidden');
-        f.src = "https://www.youtube.com/embed/CmsVx-EJU5A?autoplay=1&mute=1";
-        f.classList.remove('hidden');
-        lbl.innerText = "Live YouTube Stream (Raw)";
-        isLiveStream = true;
-      } else {
-        f.src = "";
-        f.classList.add('hidden');
-        v.classList.remove('hidden');
-        v.play();
-        lbl.innerText = "Synchronized 3-Min Demo Loop";
-        isLiveStream = false;
-        syncAudioEngine();
-      }
-    }
   </script>
 
 </body>
